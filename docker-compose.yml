@@ -1,0 +1,73 @@
+version: "3.9"
+
+services:
+  bistrobrain-api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: bistrobrain-api
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env
+    environment:
+      - CHROMA_HOST=chromadb
+      - CHROMA_PORT=8001
+      - SQLITE_DB_PATH=/data/bistrobrain.db
+    volumes:
+      - bistrobrain-data:/data
+    depends_on:
+      chromadb:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+  chromadb:
+    image: chromadb/chroma:latest
+    container_name: bistrobrain-chromadb
+    ports:
+      - "8001:8000"
+    volumes:
+      - chroma-data:/chroma/chroma
+    environment:
+      - ANONYMIZED_TELEMETRY=false
+      - ALLOW_RESET=true
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/v1/heartbeat"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+
+  # One-shot ingestion container — run once to seed data
+  bistrobrain-ingestion:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: bistrobrain-ingestion
+    command: >
+      sh -c "python synthetic_data/generate_pos_data.py &&
+             python -m data.ingestion --input synthetic_data/sample_data.csv --db /data/bistrobrain.db"
+    env_file:
+      - .env
+    environment:
+      - CHROMA_HOST=chromadb
+      - CHROMA_PORT=8001
+      - SQLITE_DB_PATH=/data/bistrobrain.db
+    volumes:
+      - bistrobrain-data:/data
+    depends_on:
+      chromadb:
+        condition: service_healthy
+    profiles:
+      - seed  # Only runs when: docker-compose --profile seed up
+
+volumes:
+  bistrobrain-data:
+  chroma-data:
